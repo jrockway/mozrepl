@@ -65,6 +65,8 @@ function onQuit() {
 function init(context) {
     var _this = this;
 
+    this._cookie          = false;
+
     this._name            = chooseName('repl', context);
     this._creationContext = context;
     this._hostContext     = context;
@@ -87,8 +89,8 @@ function init(context) {
     this._env = {};
     this._savedEnv = {};
 
-    this.setenv('printPrompt', true);
-    this.setenv('inputMode', 'syntax');
+    this.setenv('printPrompt', false);
+    this.setenv('inputMode', 'stylish');
 
     this._interactorClasses = {};
     this._interactorStack = [];
@@ -204,12 +206,25 @@ function represent(thing) {
     return s;
 }
 
+function emitJSON(command, data){
+    var obj = { command: command, result: data };
+    if(this._cookie){
+        obj.cookie = this._cookie;
+    }
+    var msg = JSON.stringify(obj);
+    this.onOutput(msg + "\015\012");
+}
+
 function print(data, appendNewline) {
     var string = data == undefined ?
         '\n' :
         data + (appendNewline == false ? '' : '\n');
-
-    this.onOutput(string);
+    if(this.getenv('inputMode') == 'stylish') {
+        this.emitJSON("repl_output", {data: string, repl: "default"});
+    }
+    else {
+        this.onOutput(string);
+    }
 }
 print.doc =
     'Converts an object to a string and prints the string. \
@@ -250,7 +265,7 @@ or optionally into an arbitrary context passed as a second parameter.';
 // ----------------------------------------------------------------------
 
 function enter(context, wrapped) {
-    if (wrapped != true && context.wrappedJSObject != undefined) 
+    if (wrapped != true && context.wrappedJSObject != undefined)
       context = context.wrappedJSObject;
 
     this._contextHistory.push(this._workContext);
@@ -484,15 +499,15 @@ reloadChrome.doc = "Reload all chrome packages";
 
 function setDebugPrefs(enabled) {
     try {
-      var dbgPrefs = ["nglayout.debug.disable_xul_cache", 
-      	              "javascript.options.showInConsole", 
+      var dbgPrefs = ["nglayout.debug.disable_xul_cache",
+      	              "javascript.options.showInConsole",
                       "browser.dom.window.dump.enabled"];
 
       var prefs = Cc["@mozilla.org/preferences-service;1"]
           .getService(Ci.nsIPrefBranch);
 
-      for each (let pname in dbgPrefs) { 
-          prefs.setBoolPref(pname, enabled); 
+      for each (let pname in dbgPrefs) {
+          prefs.setBoolPref(pname, enabled);
       }
     } catch(e) { this.print('Exception while setting debugging preferences: '+e); }
 }
@@ -546,25 +561,33 @@ var javascriptInteractor = {
     onStart: function(repl) {
         this._inputBuffer = '';
 
-        repl.print('');
-        repl.print('Welcome to MozRepl.');
-        repl.print('');
-        repl.print(' - If you get stuck at the "...>" prompt, enter a semicolon (;) at the beginning of the line to force evaluation.');
-        repl.print(' - If you get errors after every character you type, see http://github.com/bard/mozrepl/wikis/troubleshooting (short version: stop using Microsoft telnet, use netcat or putty instead)');
-        repl.print('');
-        repl.print('Current working context: ' + (repl._workContext instanceof Ci.nsIDOMWindow ?
-                                                  repl._workContext.document.location.href :
-                                                  repl._workContext));
-        repl.print('Current input mode: ' + repl._env['inputMode']);
-
-        repl.print('');
-
-        if(repl._name != 'repl') {
-            repl.print('Hmmm, seems like other repl\'s are running in repl context.');
-            repl.print('To avoid conflicts, yours will be named "' + repl._name + '".');
+        if(repl.getenv('inputMode') == "stylish"){
+            repl.emitJSON("welcome", {
+                environment: repl._env,
+                session: repl._name,
+            });
         }
+        else {
+            repl.print('');
+            repl.print('Welcome to MozRepl.');
+            repl.print('');
+            repl.print(' - If you get stuck at the "...>" prompt, enter a semicolon (;) at the beginning of the line to force evaluation.');
+            repl.print(' - If you get errors after every character you type, see http://github.com/bard/mozrepl/wikis/troubleshooting (short version: stop using Microsoft telnet, use netcat or putty instead)');
+            repl.print('');
+            repl.print('Current working context: ' + (repl._workContext instanceof Ci.nsIDOMWindow ?
+            repl._workContext.document.location.href :
+            repl._workContext));
+            repl.print('Current input mode: ' + repl._env['inputMode']);
 
-        repl._prompt();
+            repl.print('');
+
+            if(repl._name != 'repl') {
+                repl.print('Hmmm, seems like other repl\'s are running in repl context.');
+                repl.print('To avoid conflicts, yours will be named "' + repl._name + '".');
+            }
+
+            repl._prompt();
+        }
     },
 
     onStop: function(repl) {},
@@ -586,41 +609,64 @@ var javascriptInteractor = {
         const inputSeparators = {
             line:      /\n/m,
             multiline: /\n--end-remote-input\n/m,
+            stylish: /\015\012/m,
         };
 
         function handleError(e) {
             var realException = (e instanceof LoadedScriptError ? e.cause : e);
 
-            repl.print('!!! ' + realException + '\n');
-            if(realException) {
-                repl.print('Details:')
-                repl.print();
-                for(var name in realException) {
-                    var content = String(realException[name]);
-                    if(content.indexOf('\n') != -1)
-                        content = '\n' + content.replace(/^(?!$)/gm, '    ');
-                    else
-                        content = ' ' + content;
-
-                    repl.print('  ' + name + ':' + content.replace(/\s*\n$/m, ''));
-                }
-                repl.print();
+            if(repl.getenv('inputMode') == 'stylish'){
+                repl.emitJSON('repl', {
+                    result: '!!! ' + realException + '\n',
+                    success: 0,
+                }, true);
             }
+            else {
+                repl.print('!!! ' + realException + '\n');
+                if(realException) {
+                    repl.print('Details:')
+                    repl.print();
+                    for(var name in realException) {
+                        var content = String(realException[name]);
+                        if(content.indexOf('\n') != -1)
+                            content = '\n' + content.replace(/^(?!$)/gm, '    ');
+                        else
+                            content = ' ' + content;
 
-            repl._prompt();
+                        repl.print('  ' + name + ':' + content.replace(/\s*\n$/m, ''));
+                    }
+                    repl.print();
+                }
+                repl._prompt();
+            }
         }
 
         switch(repl.getenv('inputMode')) {
+        case 'stylish':
         case 'line':
         case 'multiline':
             this._inputBuffer += input;
             var [chunk, rest] = scan(this._inputBuffer, inputSeparators[repl.getenv('inputMode')]);
             while(chunk) {
                 try {
+                    if(repl.getenv('inputMode') == 'stylish'){
+                        var obj = JSON.parse(chunk);
+                        repl._cookie = obj.cookie;
+                        repl._emacsName = obj.name;
+                        chunk = obj.code;
+                    }
                     var result = repl.evaluate(chunk);
-                    if(this != undefined)
-                        repl.print(repl.represent(result));
-                    repl._prompt();
+                    if(repl.getenv('inputMode') == 'stylish'){
+                        repl.emitJSON('repl', {
+                            result: JSON.stringify(result),
+                            success: 1,
+                        });
+                    }
+                    else {
+                        if(this != undefined)
+                            repl.print(repl.represent(result));
+                        repl._prompt();
+                    }
                 } catch(e) {
                     handleError(e);
                 }
@@ -831,16 +877,23 @@ function _migrateTopLevel(context) {
         this._hostContext.addEventListener('unload', this._emergencyExit, false);
 }
 
-function _prompt(prompt) {
-    if(this.getenv('printPrompt'))
-        if(prompt) {
-            this.print(prompt, false);
-        } else {
+function _prompt(_prompt) {
+    if(this.getenv('printPrompt')){
+        var p = _prompt;
+        if(!p) {
             if(typeof(this.currentInteractor().getPrompt) == 'function')
-                this.print(this.currentInteractor().getPrompt(this), false);
+                p = this.currentInteractor().getPrompt(this);
             else
-                this.print('> ', false);
+                p = '> ';
         }
+
+        if(this.getenv('inputMode') == 'stylish'){
+            this.emitJSON("prompt", {prompt: p});
+        }
+        else {
+            this.print(p, false);
+        }
+    }
 }
 
 function receive(input) {
