@@ -67,7 +67,7 @@ function init(context) {
 
     this._cookie          = false;
 
-    this._name            = chooseName('repl', context);
+    this._name            = chooseName('MOZREPL', context);
     this._creationContext = context;
     this._hostContext     = context;
     this._workContext     = context;
@@ -207,8 +207,10 @@ function represent(thing) {
 }
 
 function emitJSON(command, data){
-    var obj = { command: command, result: data };
-    if(this._cookie){
+    var cookie = data.cookie;
+    delete data.cookie;
+    var obj = { command: command, result: data, cookie: cookie };
+    if(this._cookie && !cookie){
         obj.cookie = this._cookie;
     }
     var msg = JSON.stringify(obj);
@@ -597,7 +599,7 @@ var javascriptInteractor = {
     onResume: function(repl) {},
 
     getPrompt: function(repl) {
-        return repl._name + '> ';
+        return repl._name + '>';
     },
 
     handleInput: function(repl, input) {
@@ -651,6 +653,15 @@ var javascriptInteractor = {
                 try {
                     if(repl.getenv('inputMode') == 'stylish'){
                         var obj = JSON.parse(chunk);
+                        if(obj.command == 'repl_prompt'){
+                            repl._prompt_cookie = obj.cookie;
+                            repl.setenv('printPrompt', true);
+                            repl._prompt();
+                            repl.setenv('printPrompt', false);
+                            // XXX: bad!!
+                            this._inputBuffer = rest;
+                            return;
+                        }
                         repl._cookie = obj.cookie;
                         repl._emacsName = obj.name;
                         chunk = obj.code;
@@ -888,7 +899,7 @@ function _prompt(_prompt) {
         }
 
         if(this.getenv('inputMode') == 'stylish'){
-            this.emitJSON("prompt", {prompt: p});
+            this.emitJSON("repl_prompt", {prompt: p, cookie: this._prompt_cookie});
         }
         else {
             this.print(p, false);
