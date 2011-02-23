@@ -617,7 +617,7 @@ var javascriptInteractor = {
 
             if(repl.getenv('inputMode') == 'stylish'){
                 repl.emitJSON('repl', {
-                    result: '!!! ' + realException + '\n',
+                    result: '!!! ' + realException,
                     success: 0,
                 }, true);
             }
